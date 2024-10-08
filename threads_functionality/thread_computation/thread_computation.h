@@ -5,6 +5,6 @@
 #ifndef THREAD_COMPUTATION_H
 #define THREAD_COMPUTATION_H
 
-void* test_thread(void* arg);
+void* compute_on_thread(void* arg);
 
 #endif //THREAD_COMPUTATION_H

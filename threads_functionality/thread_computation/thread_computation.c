@@ -17,11 +17,12 @@
 #include "../../consts/POSITIONS.h"
 #include "../results.h"
 
+#define LINE_SIZE 1024
+
 void skip_line(FILE* fp);
 
-void* test_thread(void* arg)
+void* compute_on_thread(void* arg)
 {
-
     struct Results* results = malloc(sizeof(struct Results)*POSITIONS);
 
     struct ThreadArgs* thread_args = (struct ThreadArgs*)arg;
@@ -52,7 +53,8 @@ void* test_thread(void* arg)
 
     printf("Thread %d has opened the file for reading\n", thread_index);
 
-    char line[1024];
+    char line[LINE_SIZE];
+    char line_copy[LINE_SIZE];
 
     int read_lines = 0;
     int allocations = 0;
@@ -64,13 +66,15 @@ void* test_thread(void* arg)
     skip_line(fp);
     while(ftell(fp) < end_for_thread && fgets(line, sizeof(line), fp)) {
         read_lines++;
+
         line[strcspn(line, "\n")] = '\0';
+        strcpy(line_copy, line);
 
         int current_position_index = -1;
-        char* token;
+        char* token, *state;
         int column = 0;
 
-        token = strtok(line, ",");
+        token = strtok_r(line, ",", &state);
         while(token != NULL && column < 5) {
 
             if(column == 2) {
@@ -79,6 +83,7 @@ void* test_thread(void* arg)
                 for(int i=0; i < found_positions; i++) {
                     if(strcmp(results[i].position, current_position) == 0) {
                         current_position_index = i;
+                        results[current_position_index].count++;
                     }
                 }
 
@@ -102,27 +107,33 @@ void* test_thread(void* arg)
                     strcpy(results[current_position_index].position, token);
                     results[current_position_index].summed_age = 0;
                     results[current_position_index].summed_salary = 0;
-                    results[current_position_index].count = 0;
+                    results[current_position_index].count = 1;
                 }
 
             } else if (column == 3) {
-                //long age = strtol(token, NULL, 10);
-                //results[current_position_index].summed_age += age;
+                long age = strtol(token, NULL, 10);
+                results[current_position_index].summed_age += age;
             } else if (column == 4) {
-                //float salary = atof(token);
-                //results[current_position_index].summed_salary +=salary;
+                float salary = atof(token);
+                results[current_position_index].summed_salary +=salary;
             }
 
-            token = strtok(NULL, ",");
+            token = strtok_r(NULL, ",", &state);
             column++;
         }
 
+        if(column != 5) {
+            fprintf(stderr, "Error in row no %d: %s\n", read_lines, line_copy);
+            fprintf(stderr, "Number of columns should be 5 it's %d instead\n", column);
+        }
+
+        memset(line, 0, LINE_SIZE);
     }
 
     fclose(fp);
     printf("Thread %d has read %d lines\n", thread_index, read_lines);
 
-    return NULL;
+    return results;
 }
 
 void skip_line(FILE* fp) {
