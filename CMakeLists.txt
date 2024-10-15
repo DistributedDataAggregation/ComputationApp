@@ -3,6 +3,11 @@ project(test_reading_files C)
 
 set(CMAKE_C_STANDARD 11)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PARQUET REQUIRED parquet-glib)
+
+include_directories(${PARQUET_INCLUDE_DIRS})
+
 add_executable(test_reading_files calculate.c
         threads_functionality/thread_computation/thread_computation.h
         threads_functionality/thread_computation/thread_computation.c
@@ -22,6 +27,7 @@ add_custom_command(
         DEPENDS ${CSV_FILE}
 )
 
+
 # Custom command for copying the small data set CSV file
 add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/data_set_small.csv
@@ -34,3 +40,6 @@ add_custom_target(copy_csv_files ALL DEPENDS
         ${CMAKE_CURRENT_BINARY_DIR}/large_test_data.csv
         ${CMAKE_CURRENT_BINARY_DIR}/data_set_small.csv
 )
+
+
+target_link_libraries(test_reading_files ${PARQUET_LIBRARIES})

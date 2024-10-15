@@ -19,6 +19,25 @@
 
 #define LINE_SIZE 1024
 
+typedef struct {
+    const char *title;
+    float salary;
+    int age;
+} PositionInfo;
+
+PositionInfo positions[] = {
+    {"Manager", 80000, 45},
+    {"Developer", 10000, 28},
+    {"Designer", 60000, 32},
+    {"Analyst", 70000, 30},
+    {"Tester", 50000, 27},
+    {"Sales", 75000, 35},
+    {"HR", 65000, 40},
+    {"Support", 40000, 26},
+    {"Marketing", 72000, 33},
+    {"Consultant", 90000, 38}
+};
+
 void skip_line(FILE* fp);
 
 void* compute_on_thread(void* arg)
@@ -64,7 +83,7 @@ void* compute_on_thread(void* arg)
     fgets(line, sizeof(line), fp);
 
     skip_line(fp);
-    while(ftell(fp) < end_for_thread && fgets(line, sizeof(line), fp)) {
+    while(ftell(fp) <= end_for_thread && fgets(line, sizeof(line), fp)) {
         read_lines++;
 
         line[strcspn(line, "\n")] = '\0';
@@ -75,6 +94,7 @@ void* compute_on_thread(void* arg)
         int column = 0;
 
         token = strtok_r(line, ",", &state);
+        PositionInfo current_position_info;
         while(token != NULL && column < 5) {
 
             if(column == 2) {
@@ -110,11 +130,28 @@ void* compute_on_thread(void* arg)
                     results[current_position_index].count = 1;
                 }
 
+                for(int i=0; i< POSITIONS;i++) {
+                    if(strcmp(positions[i].title, current_position) == 0) {
+                        current_position_info = positions[i];
+                    }
+                }
+
             } else if (column == 3) {
                 long age = strtol(token, NULL, 10);
+                if(age != current_position_info.age) {
+                    fprintf(stderr, "Age not matching for position %s, should be %d but is %d\n",
+                        current_position_info.title, current_position_info.age, age);
+                }
+
                 results[current_position_index].summed_age += age;
             } else if (column == 4) {
                 float salary = atof(token);
+
+                if(salary != current_position_info.salary) {
+                    fprintf(stderr, "Salary not matching for position %s, should be %2f but is %2f\n",
+                            current_position_info.title, current_position_info.salary, salary);
+                }
+
                 results[current_position_index].summed_salary +=salary;
             }
 
