@@ -12,9 +12,24 @@
 #include "threads_functionality/results.h"
 #include <parquet-glib/arrow-file-reader.h>
 
-#define NUM_THREADS 3
+#define NUM_THREADS 4
 
 char* get_data_file_name_from_command_line_arguments(int argc, char** argv);
+
+void print_schema_fields(GArrowSchema *schema) {
+    gint n_fields = garrow_schema_n_fields(schema);
+
+    for (gint i = 0; i < n_fields; i++) {
+        GArrowField *field = garrow_schema_get_field(schema, i);
+        const gchar *field_name = garrow_field_get_name(field);
+        GArrowDataType* field_type = garrow_field_get_data_type(field);
+
+        // Convert GArrowType to a string for easier reading
+        const gchar *field_type_name = garrow_data_type_to_string(field_type);
+
+        g_print("Field Name: %s, Field Type: %s\n", field_name, field_type_name);
+    }
+}
 
 int main(int argc, char** argv)
 {
@@ -31,57 +46,40 @@ int main(int argc, char** argv)
     }
 
     GParquetArrowFileReader* reader = gparquet_arrow_file_reader_new_path(data_file, NULL);
-    GArrowChunkedArray* chunked_array = gparquet_arrow_file_reader_read_column_data(reader, 0, NULL);
-    GArrowArray* array = garrow_chunked_array_get_chunk(chunked_array, 0);
+    GArrowSchema* schema = gparquet_arrow_file_reader_get_schema(reader, NULL);
 
-    gint64 count = garrow_array_count(array, NULL, NULL);
-    gchar* data = garrow_array_to_string(array, NULL);
-
-    printf("%s\n", data);
-
-    g_free(reader);
-    g_free(chunked_array);
-    g_free(array);
-    g_free(data);
+    print_schema_fields(schema);
+    GArrowChunkedArray* chunked_array = gparquet_arrow_file_reader_read_column_data(reader, 3, NULL);
 
 
-    // pthread_t threads[NUM_THREADS];
-    //
-    // struct ThreadArgs thread_args[2];
-    // for(int i = 0; i < NUM_THREADS; i++) {
-    //     thread_args[i].filename = data_file;
-    //     thread_args[i].threads_count = NUM_THREADS;
-    //     thread_args[i].thread_index = i;
-    //     pthread_create(&threads[i], NULL, &compute_on_thread, &thread_args[i]);
-    // }
-    //
-    // int total_count = 0;
-    //
-    // for(int i = 0; i < NUM_THREADS; i++) {
-    //     void* retval;
-    //     pthread_join(threads[i], &retval);
-    //
-    //         struct Results *partial_results = (struct Results *) retval;
-    //
-    //     for(int i=0;i<POSITIONS;i++) {
-    //
-    //         printf("There are %ld %s's\n", partial_results[i].count, partial_results[i].position);
-    //         printf("The summed salary is %f\n", partial_results[i].summed_salary);
-    //         printf("Position %s: average age=%2f, average salary=%2f\n",
-    //              partial_results[i].position,
-    //              (partial_results[i].summed_age/(float)partial_results[i].count),
-    //              (partial_results[i].summed_salary/(float)partial_results[i].count));
-    //
-    //         total_count += partial_results[i].count;
-    //         free(partial_results[i].position);
-    //     }
-    //
-    //      free(partial_results);
-    //
-    //     printf("Thread %d returned\n", i);
-    //}
+    g_object_unref(reader);
+    g_object_unref(schema);
+    g_object_unref(chunked_array);
 
-    // printf("Total number of records: %d\n", total_count);
+
+     pthread_t threads[NUM_THREADS];
+
+     struct ThreadArgs thread_args[2];
+     for(int i = 0; i < NUM_THREADS; i++) {
+         thread_args[i].filename = data_file;
+         thread_args[i].threads_count = NUM_THREADS;
+         thread_args[i].thread_index = i;
+         pthread_create(&threads[i], NULL, &compute_on_thread, &thread_args[i]);
+     }
+
+     int total_count = 0;
+
+     for(int i = 0; i < NUM_THREADS; i++) {
+         void* retval;
+         pthread_join(threads[i], &retval);
+
+         int *count_from_thread = (int *) retval;
+         printf("Thread computed %d rows\n", *count_from_thread);
+         free(count_from_thread);
+         printf("Thread %d returned\n", i);
+    }
+
+    printf("Total number of records: %d\n", total_count);
     return EXIT_SUCCESS;
 }
 
