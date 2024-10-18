@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include "thread_computation.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -19,7 +20,9 @@
 #include <parquet-glib/arrow-file-reader.h>
 
 #define LINE_SIZE 1024
-#define NUM_OF_COLUMNS 1
+#define NUM_OF_COLUMNS 3
+#define NEW_LINE "\n"
+#define NOT_FOUND_POSITION -1
 
 typedef struct {
     const char *title;
@@ -41,19 +44,28 @@ PositionInfo positions[] = {
 };
 
 void skip_line(FILE* fp);
+int get_position_index(const struct Results* results, const char* position, const int found_positions);
+int setup_new_position_data(struct Results* results, const char* position, int* found_positions, int position_index);
 
 void* compute_on_thread(void* arg)
 {
+    int found_positions = 0;
     struct Results* results = malloc(sizeof(struct Results)*POSITIONS);
-
     struct ThreadArgs* thread_args = (struct ThreadArgs*)arg;
     int thread_index = thread_args->thread_index;
 
     printf("Thread number %d started\n", thread_index);
     printf("Filename %s\n", thread_args->filename);
 
-    GParquetArrowFileReader* reader = gparquet_arrow_file_reader_new_path(thread_args->filename, NULL);
+    GError* error = NULL;
+    GParquetArrowFileReader* reader = gparquet_arrow_file_reader_new_path(thread_args->filename, &error);
     if(reader == NULL) {
+        if (error != NULL) {
+            g_print("Error occurred: %s\n", error->message);
+            g_error_free(error);  // Free the GError after use
+        } else {
+            g_print("Unknown error occurred.\n");
+        }
         printf("Thread %d is quiting because of failed file opening attempt\n", thread_index);
         return NULL;
     }
@@ -69,27 +81,66 @@ void* compute_on_thread(void* arg)
     int* total_count_for_thread = (int*)(malloc(sizeof(int)));
     *total_count_for_thread = 0;
 
-    gint columns_indices[NUM_OF_COLUMNS] = {3};
+    gint columns_indices[NUM_OF_COLUMNS] = {2,3,4};
     for(int i=start_for_thread; i< row_groups_count && i < end_for_thread; i++) {
         GArrowTable* table = gparquet_arrow_file_reader_read_row_group (reader, i, columns_indices, NUM_OF_COLUMNS, NULL);
-        GArrowChunkedArray* chunked_array = garrow_table_get_column_data (table,0);
 
-        gint chunks_count = garrow_chunked_array_get_n_chunks(chunked_array);
+        GArrowChunkedArray* position_chunk_array = garrow_table_get_column_data (table,0);
+        GArrowChunkedArray* age_chunk_array = garrow_table_get_column_data (table,1);
+        GArrowChunkedArray* salary_chunk_array = garrow_table_get_column_data (table,2);
+
+        gint chunks_count = garrow_chunked_array_get_n_chunks(position_chunk_array);
 
         for(int j=0; j< chunks_count; j++) {
-            GArrowArray* array = garrow_chunked_array_get_chunk(chunked_array, j);
-            gint count = garrow_array_count(array, NULL, NULL);
-            gchar* data = garrow_array_to_string(array, NULL);
+            GArrowArray* positions_array = garrow_chunked_array_get_chunk(position_chunk_array, j);
+            GArrowStringArray* string_array = GARROW_STRING_ARRAY(positions_array);
+
+            GArrowArray* ages_array = garrow_chunked_array_get_chunk(age_chunk_array, j);
+            GArrowInt64Array* ages_int_array = GARROW_INT64_ARRAY(ages_array);
+
+            GArrowArray* salaries_array = garrow_chunked_array_get_chunk(salary_chunk_array, j);
+            GArrowInt64Array* salaries_int_array = GARROW_INT64_ARRAY(salaries_array);
+
+            gint count = garrow_array_count(positions_array, NULL, NULL);
+            gchar* data = garrow_array_to_string(positions_array, NULL);
+
+            char* state;
+            int test_counter = 0;
+            for(int k = 0; k < count; k++) {
+                gchar* position = garrow_string_array_get_string(string_array, k);
+                int position_index = get_position_index(results, position, found_positions);
+                if(position_index == NOT_FOUND_POSITION) {
+                    position_index = setup_new_position_data(results, position, &found_positions, position_index);
+                }
+
+                test_counter++;
+                results[position_index].count++;
+                results[position_index].summed_age += garrow_int64_array_get_value(ages_int_array, k);
+                results[position_index].summed_salary += garrow_int64_array_get_value(salaries_int_array, k);
+            }
+
             (*total_count_for_thread) += count;
             g_free(data);
-            g_object_unref(array);
+            g_object_unref(positions_array);
         }
         g_object_unref(table);
-        g_object_unref(chunked_array);
     }
 
+    for(int i=0;i<POSITIONS;i++) {
+        printf("There are %ld %ss'\n", results[i].count, results[i].position);
+    }
 
     g_object_unref(reader);
+
+    printf("Thread %d has read %d lines\n", thread_index, *total_count_for_thread);
+    return results;
+}
+
+int parse_chunked_row_group(char* positions_chunk, char* ages_chunk, char* salaries_chunk)
+{
+    int read_lines = 0;
+
+
     // printf("Thread %d has opened the file for reading\n", thread_index);
     //
     // char line[LINE_SIZE];
@@ -186,9 +237,59 @@ void* compute_on_thread(void* arg)
     //
     //     memset(line, 0, LINE_SIZE);
     // }
+    return read_lines;
+}
 
-    printf("Thread %d has read %d lines\n", thread_index, *total_count_for_thread);
-    return total_count_for_thread;
+int get_position_index(const struct Results* results, const char* position, const int found_positions) {
+    int position_index = NOT_FOUND_POSITION;
+
+    if(results == NULL) {
+        printf("Results array is empty\n");
+        return position_index;
+    }
+
+    for(int i=0; i < found_positions; i++) {
+        if(i >= POSITIONS) {
+            printf("Index out of bound of position array\n");
+            assert(FALSE);
+            return NOT_FOUND_POSITION;
+        }
+
+        if(strcmp(results[i].position, position) == 0) {
+            position_index = i;
+        }
+    }
+
+    return position_index;
+}
+
+int setup_new_position_data(struct Results* results, const char* position, int* found_positions, int position_index) {
+    int new_position_index;
+    if(position_index == -1) {
+        //printf("Thread %d found new position: %s\n", thread_index, current_position);
+        new_position_index = (*found_positions)++;
+
+        if(new_position_index >= POSITIONS) {
+            fprintf(stderr, "Error increased index out of array bounds");
+            return -1;
+        }
+
+        results[new_position_index].position = (char*)malloc((strlen(position) + 1));
+        if(results[new_position_index].position == NULL) {
+            perror("malloc");
+            return -1;
+        }
+
+        strcpy(results[new_position_index].position, position);
+        results[new_position_index].summed_age = 0;
+        results[new_position_index].summed_salary = 0;
+        results[new_position_index].count = 0;
+    }else {
+        fprintf(stderr, "Position index should be -1 to invoke setup_new_position_data\n");
+        assert(FALSE);
+    }
+
+    return new_position_index;
 }
 
 void skip_line(FILE* fp) {

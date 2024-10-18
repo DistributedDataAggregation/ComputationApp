@@ -8,7 +8,7 @@
 struct Results {
     char* position;
     long summed_age;
-    float summed_salary;
+    long summed_salary;
     long count;
 };
 
